@@ -1,12 +1,5 @@
 import java.util.*;
 
-// ================= EXCEPTION =================
-class InvalidBookingException extends Exception {
-    public InvalidBookingException(String msg) {
-        super(msg);
-    }
-}
-
 // ================= ROOM =================
 abstract class Room {
     protected String type;
@@ -25,48 +18,26 @@ class SingleRoom extends Room {
     public SingleRoom() { super("Single Room", 1000); }
 }
 
-class DoubleRoom extends Room {
-    public DoubleRoom() { super("Double Room", 2000); }
-}
-
-// ================= INVENTORY =================
+// ================= INVENTORY (THREAD SAFE) =================
 class RoomInventory {
     private Map<String, Integer> inventory = new HashMap<>();
 
-    public void addRoom(String type, int count) {
+    public synchronized void addRoom(String type, int count) {
         inventory.put(type, count);
     }
 
-    public int getAvailability(String type) {
+    public synchronized int getAvailability(String type) {
         return inventory.getOrDefault(type, 0);
     }
 
-    public void reduceRoom(String type) {
-        inventory.put(type, inventory.get(type) - 1);
-    }
+    public synchronized boolean bookRoom(String type) {
+        int available = inventory.getOrDefault(type, 0);
 
-    public void increaseRoom(String type) {
-        inventory.put(type, inventory.get(type) + 1);
-    }
-
-    public boolean exists(String type) {
-        return inventory.containsKey(type);
-    }
-}
-
-// ================= VALIDATOR =================
-class BookingValidator {
-    public static void validate(String name, String room, RoomInventory inv)
-            throws InvalidBookingException {
-
-        if (name == null || name.trim().isEmpty())
-            throw new InvalidBookingException("Invalid Name");
-
-        if (!inv.exists(room))
-            throw new InvalidBookingException("Invalid Room Type");
-
-        if (inv.getAvailability(room) <= 0)
-            throw new InvalidBookingException("No Rooms Available");
+        if (available > 0) {
+            inventory.put(type, available - 1);
+            return true;
+        }
+        return false;
     }
 }
 
@@ -76,72 +47,40 @@ class Reservation {
     private int id;
     private String name;
     private String roomType;
-    private double price;
-    private boolean active = true;
 
-    public Reservation(String name, String roomType, double price) {
+    public Reservation(String name, String roomType) {
         this.id = counter++;
         this.name = name;
         this.roomType = roomType;
-        this.price = price;
     }
 
-    public int getId() { return id; }
     public String getName() { return name; }
     public String getRoomType() { return roomType; }
-    public double getPrice() { return price; }
-
-    public boolean isActive() { return active; }
-    public void cancel() { active = false; }
+    public int getId() { return id; }
 }
 
-// ================= QUEUE =================
-class BookingQueue {
-    private Queue<Reservation> q = new LinkedList<>();
+// ================= THREAD (BOOKING PROCESSOR) =================
+class BookingProcessor extends Thread {
 
-    public void add(Reservation r) { q.add(r); }
-    public Reservation process() { return q.poll(); }
-    public boolean isEmpty() { return q.isEmpty(); }
-}
+    private Reservation reservation;
+    private RoomInventory inventory;
 
-// ================= HISTORY =================
-class BookingHistory {
-    private Map<Integer, Reservation> records = new HashMap<>();
-
-    public void add(Reservation r) {
-        records.put(r.getId(), r);
+    public BookingProcessor(Reservation r, RoomInventory inv) {
+        this.reservation = r;
+        this.inventory = inv;
     }
 
-    public Reservation get(int id) {
-        return records.get(id);
-    }
+    @Override
+    public void run() {
+        System.out.println("Processing: " + reservation.getName());
 
-    public Collection<Reservation> getAll() {
-        return records.values();
-    }
-}
+        boolean success = inventory.bookRoom(reservation.getRoomType());
 
-// ================= CANCELLATION =================
-class CancellationService {
-
-    public static void cancelBooking(int id, BookingHistory history, RoomInventory inv)
-            throws InvalidBookingException {
-
-        Reservation r = history.get(id);
-
-        if (r == null)
-            throw new InvalidBookingException("Reservation not found");
-
-        if (!r.isActive())
-            throw new InvalidBookingException("Already cancelled");
-
-        // Rollback inventory
-        inv.increaseRoom(r.getRoomType());
-
-        // Mark cancelled
-        r.cancel();
-
-        System.out.println("🔁 Booking Cancelled for " + r.getName());
+        if (success) {
+            System.out.println("✅ SUCCESS: " + reservation.getName());
+        } else {
+            System.out.println("❌ FAILED: " + reservation.getName() + " (No rooms)");
+        }
     }
 }
 
@@ -149,52 +88,25 @@ class CancellationService {
 public class Main {
     public static void main(String[] args) {
 
-        RoomInventory inv = new RoomInventory();
-        inv.addRoom("Single Room", 1);
-        inv.addRoom("Double Room", 1);
+        RoomInventory inventory = new RoomInventory();
+        inventory.addRoom("Single Room", 2); // only 2 rooms
 
-        BookingQueue queue = new BookingQueue();
-        BookingHistory history = new BookingHistory();
+        // Multiple users trying to book at same time
+        Reservation r1 = new Reservation("Alice", "Single Room");
+        Reservation r2 = new Reservation("Bob", "Single Room");
+        Reservation r3 = new Reservation("Charlie", "Single Room");
+        Reservation r4 = new Reservation("David", "Single Room");
 
-        System.out.println("=== BOOKING PHASE ===\n");
+        // Threads
+        Thread t1 = new BookingProcessor(r1, inventory);
+        Thread t2 = new BookingProcessor(r2, inventory);
+        Thread t3 = new BookingProcessor(r3, inventory);
+        Thread t4 = new BookingProcessor(r4, inventory);
 
-        try {
-            BookingValidator.validate("Alice", "Single Room", inv);
-            queue.add(new Reservation("Alice", "Single Room", 1000));
-
-            BookingValidator.validate("Bob", "Double Room", inv);
-            queue.add(new Reservation("Bob", "Double Room", 2000));
-
-        } catch (InvalidBookingException e) {
-            System.out.println("ERROR: " + e.getMessage());
-        }
-
-        // Process bookings
-        while (!queue.isEmpty()) {
-            Reservation r = queue.process();
-
-            inv.reduceRoom(r.getRoomType());
-            history.add(r);
-
-            System.out.println("✅ Confirmed: " + r.getName() + " (ID: " + r.getId() + ")");
-        }
-
-        // Cancellation
-        System.out.println("\n=== CANCELLATION PHASE ===\n");
-
-        try {
-            CancellationService.cancelBooking(1, history, inv); // valid
-            CancellationService.cancelBooking(1, history, inv); // error
-        } catch (InvalidBookingException e) {
-            System.out.println("❌ ERROR: " + e.getMessage());
-        }
-
-        // Final state
-        System.out.println("\n=== FINAL STATUS ===");
-        for (Reservation r : history.getAll()) {
-            System.out.println("ID: " + r.getId() +
-                    " | " + r.getName() +
-                    " | Active: " + r.isActive());
-        }
+        // Start threads
+        t1.start();
+        t2.start();
+        t3.start();
+        t4.start();
     }
 }
