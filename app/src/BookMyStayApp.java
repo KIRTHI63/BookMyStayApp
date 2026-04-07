@@ -72,11 +72,10 @@ class BookingQueue {
 
     public void addRequest(Reservation r) {
         queue.add(r);
-        System.out.println("Request added: " + r.getGuestName());
     }
 
     public Reservation processRequest() {
-        return queue.poll(); // FIFO
+        return queue.poll();
     }
 
     public boolean isEmpty() {
@@ -116,11 +115,49 @@ class AddOnServiceManager {
         }
         return total;
     }
+}
 
-    public void showServices(int resId) {
-        if (!map.containsKey(resId)) return;
-        for (AddOnService s : map.get(resId)) {
-            System.out.println("  + " + s.getName() + " ₹" + s.getPrice());
+// ================= BOOKING HISTORY =================
+class BookingHistory {
+    private List<Reservation> history = new ArrayList<>();
+    private Map<Integer, Double> finalBills = new HashMap<>();
+
+    public void add(Reservation r, double totalBill) {
+        history.add(r);
+        finalBills.put(r.getId(), totalBill);
+    }
+
+    public List<Reservation> getHistory() {
+        return history;
+    }
+
+    public double getBill(int id) {
+        return finalBills.getOrDefault(id, 0.0);
+    }
+}
+
+// ================= REPORT SERVICE =================
+class ReportService {
+
+    public void generateReport(BookingHistory history) {
+        System.out.println("\n===== BOOKING REPORT =====");
+
+        int totalBookings = history.getHistory().size();
+        double totalRevenue = 0;
+
+        for (Reservation r : history.getHistory()) {
+            totalRevenue += history.getBill(r.getId());
+        }
+
+        System.out.println("Total Confirmed Bookings: " + totalBookings);
+        System.out.println("Total Revenue: ₹" + totalRevenue);
+
+        System.out.println("\nDetailed History:");
+        for (Reservation r : history.getHistory()) {
+            System.out.println("ID: " + r.getId() +
+                    " | Guest: " + r.getGuestName() +
+                    " | Room: " + r.getRoomType() +
+                    " | Bill: ₹" + history.getBill(r.getId()));
         }
     }
 }
@@ -142,8 +179,6 @@ public class Main {
 
         // Queue
         BookingQueue queue = new BookingQueue();
-
-        // Add requests
         queue.addRequest(new Reservation("Alice", "Single Room", single.getPrice()));
         queue.addRequest(new Reservation("Bob", "Double Room", dbl.getPrice()));
         queue.addRequest(new Reservation("Charlie", "Suite Room", suite.getPrice()));
@@ -155,38 +190,36 @@ public class Main {
 
         AddOnServiceManager serviceManager = new AddOnServiceManager();
 
-        System.out.println("\n=== PROCESSING BOOKINGS ===\n");
+        // History
+        BookingHistory history = new BookingHistory();
+
+        System.out.println("=== PROCESSING BOOKINGS ===\n");
 
         while (!queue.isEmpty()) {
             Reservation r = queue.processRequest();
 
-            int available = inventory.getAvailability(r.getRoomType());
+            if (inventory.getAvailability(r.getRoomType()) > 0) {
 
-            if (available > 0) {
                 inventory.reduceRoom(r.getRoomType());
 
-                System.out.println("Booking CONFIRMED for " + r.getGuestName());
-                System.out.println("Room: " + r.getRoomType());
-
-                // Add services randomly (demo)
+                // Add services
                 serviceManager.addService(r.getId(), wifi);
                 serviceManager.addService(r.getId(), food);
 
-                double serviceCost = serviceManager.getTotal(r.getId());
-                double total = r.getBasePrice() + serviceCost;
+                double total = r.getBasePrice() + serviceManager.getTotal(r.getId());
 
-                System.out.println("Base Price: ₹" + r.getBasePrice());
-                System.out.println("Add-ons:");
-                serviceManager.showServices(r.getId());
-                System.out.println("Total Bill: ₹" + total);
+                System.out.println("CONFIRMED: " + r.getGuestName() + " | ₹" + total);
+
+                // Store in history
+                history.add(r, total);
 
             } else {
-                System.out.println("Booking FAILED for " + r.getGuestName() + " (No rooms)");
+                System.out.println("FAILED: " + r.getGuestName());
             }
-
-            System.out.println("----------------------------");
         }
 
-        System.out.println("\nAll bookings processed.");
+        // Generate Report
+        ReportService report = new ReportService();
+        report.generateReport(history);
     }
 }
